@@ -219,7 +219,6 @@ export async function command(commandOptions: CommandOptions) {
   paint(
     messageBus,
     config.plugins.map((p) => p.name),
-    undefined,
     {
       addPackage: async (pkgName: string) => {
         isLiveReloadPaused = true;

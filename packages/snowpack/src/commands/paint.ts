@@ -4,7 +4,6 @@ import * as colors from 'kleur/colors';
 import path from 'path';
 import readline from 'readline';
 import util from 'util';
-import {isYarn} from '../util';
 const cwd = process.cwd();
 
 /**
@@ -47,24 +46,6 @@ export async function getPort(defaultPort: number): Promise<number> {
   return bestAvailablePort;
 }
 
-function getStateString(workerState: any, isWatch: boolean): [colors.Colorize, string] {
-  if (workerState.state) {
-    if (Array.isArray(workerState.state)) {
-      return [colors[workerState.state[1]], workerState.state[0]];
-    }
-    return [colors.dim, workerState.state];
-  }
-  if (workerState.done) {
-    return workerState.error ? [colors.red, 'FAIL'] : [colors.green, 'DONE'];
-  }
-  if (isWatch) {
-    if (workerState.config.watch) {
-      return [colors.dim, 'WATCH'];
-    }
-  }
-  return [colors.dim, 'READY'];
-}
-
 interface WorkerState {
   done: boolean;
   state: null | [string, string];
@@ -76,7 +57,6 @@ const WORKER_BASE_STATE: WorkerState = {done: false, error: null, state: null, o
 export function paint(
   bus: EventEmitter,
   scripts: string[],
-  buildMode: {dest: string} | undefined,
   devMode:
     | {
         addPackage: (pkgName: string) => void;
@@ -91,7 +71,6 @@ export function paint(
   let consoleOutput = '';
   let installOutput = '';
   let isInstalling = false;
-  let hasBeenCleared = false;
   let missingWebModule: null | {id: string; spec: string; pkgName: string} = null;
   const allWorkerStates: Record<string, WorkerState> = {};
   const allFileBuilds = new Set<string>();
@@ -107,121 +86,83 @@ export function paint(
   }
 
   function repaint() {
+    // Clear Page
     process.stdout.write(process.platform === 'win32' ? '\x1B[2J\x1B[0f' : '\x1B[2J\x1B[3J\x1B[H');
-    process.stdout.write(`${colors.bold('Snowpack')}\n\n`);
-    // Dashboard
-    if (devMode) {
-      const isServerStarted = startTimeMs > 0 && port > 0 && protocol;
 
-      if (isServerStarted) {
-        process.stdout.write(`  ${colors.bold(colors.cyan(`${protocol}//${hostname}:${port}`))}`);
-        for (const ip of ips) {
-          process.stdout.write(
-            `${colors.cyan(` • `)}${colors.bold(colors.cyan(`${protocol}//${ip}:${port}`))}`,
-          );
-        }
-        process.stdout.write('\n');
-        process.stdout.write(
-          colors.dim(
-            startTimeMs < 1000 ? `  Server started in ${startTimeMs}ms.` : `  Server started.`, // Not to hide slow startup times, but likely there were extraneous factors (prompts, etc.) where the speed isn’t accurate
-          ),
-        );
-        if (allFileBuilds.size > 0) {
-          process.stdout.write(colors.dim(` Building...`));
-        }
-        process.stdout.write('\n\n');
-      } else {
-        process.stdout.write(colors.dim(`  Server starting…`) + '\n\n');
-      }
-    }
-    if (buildMode) {
-      process.stdout.write('  ' + colors.bold(colors.cyan(buildMode.dest)));
-      process.stdout.write(colors.dim(` Building your application...\n\n`));
+    // Print the Console
+    if (consoleOutput) {
+      process.stdout.write(`${colors.underline(colors.bold('▼ Console'))}\n\n`);
+      process.stdout.write(consoleOutput.trim().replace(/\n/gm, '\n  '));
+      process.stdout.write('\n\n');
     }
 
-    let didPrintDashboard = false;
+    // Print the Workers
     for (const [script, workerState] of Object.entries(allWorkerStates)) {
-      if (!workerState.state) {
-        continue;
+      if (workerState.output) {
+        const colorsFn = Array.isArray(workerState.error) ? colors.red : colors.reset;
+        process.stdout.write(`${colorsFn(colors.underline(colors.bold('▼ ' + script)))}\n\n`);
+        process.stdout.write(workerState.output.trim().replace(/\n/gm, '\n  '));
+        process.stdout.write('\n\n');
       }
-      const dotLength = 34 - script.length;
-      const dots = colors.dim(''.padEnd(dotLength, '.'));
-      const [fmt, stateString] = getStateString(workerState, !!devMode);
-      process.stdout.write(`  ${script}${dots}[${fmt(stateString)}]\n`);
-      didPrintDashboard = true;
     }
 
-    if (didPrintDashboard) {
+    // Dashboard
+    process.stdout.write(`${colors.bold('Snowpack')}\n\n`);
+    const isServerStarted = startTimeMs > 0 && port > 0 && protocol;
+
+    if (isServerStarted) {
+      process.stdout.write(`  ${colors.bold(colors.cyan(`${protocol}//${hostname}:${port}`))}`);
+      for (const ip of ips) {
+        process.stdout.write(
+          `${colors.cyan(` • `)}${colors.bold(colors.cyan(`${protocol}//${ip}:${port}`))}`,
+        );
+      }
       process.stdout.write('\n');
+      process.stdout.write(
+        colors.dim(
+          startTimeMs < 1000 ? `  Server started in ${startTimeMs}ms.` : `  Server started.`, // Not to hide slow startup times, but likely there were extraneous factors (prompts, etc.) where the speed isn’t accurate
+        ),
+      );
+      if (allFileBuilds.size > 0) {
+        process.stdout.write(colors.dim(` Building...`));
+      }
+      process.stdout.write('\n\n');
+    } else {
+      process.stdout.write(colors.dim(`  Server starting…`) + '\n\n');
     }
 
-    process.stdout.write('\n');
     if (isInstalling) {
       process.stdout.write(`${colors.underline(colors.bold('▼ snowpack install'))}\n\n`);
       process.stdout.write('  ' + installOutput.trim().replace(/\n/gm, '\n  '));
       process.stdout.write('\n\n');
       return;
     }
-    if (missingWebModule) {
-      const {id, pkgName, spec} = missingWebModule;
-      process.stdout.write(`${colors.red(colors.underline(colors.bold('▼ Snowpack')))}\n\n`);
-      if (devMode) {
-        process.stdout.write(`  Package ${colors.bold(pkgName)} not found!\n`);
-        process.stdout.write(colors.dim(`  in ${id}`));
-        process.stdout.write(`\n\n`);
-        process.stdout.write(
-          `  ${colors.bold('Press Enter')} to automatically run ${colors.bold(
-            isYarn(cwd) ? `yarn add ${pkgName}` : `npm install --save ${pkgName}`,
-          )}.\n`,
-        );
-        process.stdout.write(`  Or, Exit Snowpack and install manually to continue.\n`);
-      } else {
-        process.stdout.write(`  Dependency ${colors.bold(spec)} not found!\n\n`);
-        // process.stdout.write(
-        //   `  Run ${colors.bold('snowpack install')} to install all required dependencies.\n\n`,
-        // );
-        process.exit(1);
-      }
-      return;
-    }
-    for (const [script, workerState] of Object.entries(allWorkerStates)) {
-      if (workerState.output) {
-        const colorsFn = Array.isArray(workerState.error) ? colors.red : colors.reset;
-        process.stdout.write(`${colorsFn(colors.underline(colors.bold('▼ ' + script)))}\n\n`);
-        process.stdout.write(
-          workerState.output
-            ? '  ' + workerState.output.trim().replace(/\n/gm, '\n  ')
-            : hasBeenCleared
-            ? colors.dim('  Output cleared.')
-            : colors.dim('  No output, yet.'),
-        );
-        process.stdout.write('\n\n');
-      }
-    }
-    if (consoleOutput) {
-      process.stdout.write(`${colors.underline(colors.bold('▼ Console'))}\n\n`);
-      process.stdout.write(
-        consoleOutput
-          ? '  ' + consoleOutput.trim().replace(/\n/gm, '\n  ')
-          : hasBeenCleared
-          ? colors.dim('  Output cleared.')
-          : colors.dim('  No output, yet.'),
-      );
-      process.stdout.write('\n\n');
-    }
-    const overallStatus = Object.values(allWorkerStates).reduce((result, {done, error}) => {
-      return {
-        done: result.done && done,
-        error: result.error || error,
-      } as any;
-    });
-    if (overallStatus.error) {
-      process.stdout.write(`${colors.underline(colors.red(colors.bold('▼ Result')))}\n\n`);
-      process.stdout.write('  ⚠️  Finished, with errors.');
-      process.stdout.write('\n\n');
-      process.exit(1);
-    }
   }
+
+  /*
+      import 'react';
+      // snowpack fetches this from the CDN
+      // saves it into a local cache - /Cache/snowpack/cdn/-/react-v16.13.1-hawhegawigawigahiw/react.js
+      // Snowpack would serve it directly out of that cache
+      // Snowpack would serve anything `/web_modules/*` out of `/Cache/snowpack/cdn/-/*`
+    */
+
+  /*
+
+      TODO:
+      - Cleaning this UI up a bit
+        - What is the "empty state" / "start state" of this dev console?
+        - First line? "Waiting for changes..."
+        - can we make our default workers more concise?
+        - "▼ run:tsc" (underlined, with down arrow) vs. "Snowpack" (not underlined, no down arrow)?
+        - indenting within a section?
+        - get the console logs to match the pino logger
+      - cleaning up dev.ts a bit
+        - getting rid of messageBus things we no longer care about
+        - what is the message bus?
+        - what is the run()->dev console interface? `{paint: (action: 'CLEAR' | 'PAINT', str: string)}`
+
+        */
 
   bus.on('BUILD_FILE', ({id, isBuilding}) => {
     if (isBuilding) {
@@ -269,22 +210,6 @@ export function paint(
     }
     repaint();
   });
-  bus.on('NEW_SESSION', () => {
-    if (consoleOutput) {
-      consoleOutput = ``;
-      hasBeenCleared = true;
-    }
-    // Reset all per-file build scripts
-    for (const script of scripts) {
-      if (script.startsWith('build')) {
-        setupWorker(script);
-        allWorkerStates[script] = {
-          ...WORKER_BASE_STATE,
-        };
-      }
-    }
-    repaint();
-  });
   bus.on('INSTALLING', () => {
     isInstalling = true;
     installOutput = '';
@@ -296,7 +221,6 @@ export function paint(
       isInstalling = false;
       installOutput = '';
       consoleOutput = ``;
-      hasBeenCleared = true;
       repaint();
     }, 2000);
   });
