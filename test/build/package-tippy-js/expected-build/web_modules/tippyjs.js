@@ -1659,7 +1659,7 @@ var createPopper = /*#__PURE__*/popperGenerator({
 }); // eslint-disable-next-line import/no-unused-modules
 
 /**!
-* tippy.js v6.2.5
+* tippy.js v6.2.6
 * (c) 2017-2020 atomiks
 * MIT License
 */
@@ -2381,7 +2381,6 @@ function createTippy(reference, passedProps) {
     }
 
     if (instance.props.hideOnClick === true) {
-      isVisibleFromClick = false;
       instance.clearDelayTimeouts();
       instance.hide(); // `mousedown` event is fired right before `focus` if pressing the
       // currentTarget. This lets a tippy with `focus` trigger know that it
@@ -2558,7 +2557,7 @@ function createTippy(reference, passedProps) {
 
   function onMouseMove(event) {
     var target = event.target;
-    var isCursorOverReferenceOrPopper = reference.contains(target) || popper.contains(target);
+    var isCursorOverReferenceOrPopper = getCurrentTarget().contains(target) || popper.contains(target);
 
     if (event.type === 'mousemove' && isCursorOverReferenceOrPopper) {
       return;
@@ -2985,6 +2984,7 @@ function createTippy(reference, passedProps) {
     instance.state.isVisible = false;
     instance.state.isShown = false;
     ignoreOnFirstUpdate = false;
+    isVisibleFromClick = false;
 
     if (getIsDefaultRenderFn()) {
       popper.style.visibility = 'hidden';
@@ -3255,7 +3255,7 @@ function delegate(targets, props) {
       return;
     }
 
-    if (event.type !== 'touchstart' && trigger.indexOf(BUBBLING_EVENTS_MAP[event.type])) {
+    if (event.type !== 'touchstart' && trigger.indexOf(BUBBLING_EVENTS_MAP[event.type]) < 0) {
       return;
     }
 
@@ -3532,20 +3532,26 @@ var followCursor = {
         }
       },
       onMount: function onMount() {
-        if (instance.props.followCursor) {
+        if (instance.props.followCursor && !wasFocusEvent) {
           if (isUnmounted) {
             onMouseMove(mouseCoords);
             isUnmounted = false;
           }
 
-          if (!wasFocusEvent && !getIsInitialBehavior()) {
+          if (!getIsInitialBehavior()) {
             addListener();
           }
         }
       },
-      onTrigger: function onTrigger(_, _ref3) {
-        var type = _ref3.type;
-        wasFocusEvent = type === 'focus';
+      onTrigger: function onTrigger(_, event) {
+        if (isMouseEvent(event)) {
+          mouseCoords = {
+            clientX: event.clientX,
+            clientY: event.clientY
+          };
+        }
+
+        wasFocusEvent = event.type === 'focus';
       },
       onHidden: function onHidden() {
         if (instance.props.followCursor) {

@@ -1,1 +1,3 @@
-console.log("I’m JS");
+import './web_modules/preact';
+
+console.log('I’m JS');
